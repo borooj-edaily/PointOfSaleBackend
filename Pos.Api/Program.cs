@@ -2,8 +2,9 @@ using System.Reflection;
 using DotNetEnv;
 using FluentValidation;
 using MediatR;
-using Pos.Api.Data;
-using Pos.Api.Data.Repositories;
+using Pos.Api.Behaviors;
+using Pos.Api.Database;
+using Pos.Api.Interfaces;
 using Pos.Api.Middleware;
 using Serilog;
 
@@ -27,10 +28,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // ---- Dapper / MySQL (NOT EF Core) ----
-builder.Services.AddScoped<IDbConnectionFactory, MySqlConnectionFactory>();
-
-// TEMPORARY: replace with the real repository in card 7 once Products exists
-builder.Services.AddScoped<IProductStockRepository, PlaceholderProductStockRepository>();
+builder.Services.AddSingleton<IPosDatabase, PosDatabase>();
 
 // ---- MediatR ----
 builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(Assembly.GetExecutingAssembly()));
@@ -47,7 +45,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseMiddleware<GlobalExceptionMiddleware>();
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseHttpsRedirection();
 app.UseAuthorization();
 app.MapControllers();

@@ -1,12 +1,11 @@
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
-using Pos.Api.Features.Invoices.Contracts;
-using Pos.Api.Features.Invoices.Finalize;
+using Pos.Api.Features.Invoices;
 
-namespace Pos.Api.Features.Invoices;
+namespace Pos.Api.Controllers;
 
 [ApiController]
-[Route("api/invoices")]
+[Route("api/[controller]")]
 public class InvoicesController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -17,12 +16,10 @@ public class InvoicesController : ControllerBase
     }
 
     [HttpPost("finalize")]
-    [ProducesResponseType(typeof(FinalizeInvoiceResponse), StatusCodes.Status201Created)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Finalize([FromBody] FinalizeInvoiceRequest request, CancellationToken ct)
     {
         var command = FinalizeInvoiceCommand.FromRequest(request);
-        var result = await _mediator.Send(command, ct);
-        return CreatedAtAction(nameof(Finalize), new { id = result.InvoiceId }, result);
+        var response = await _mediator.Send(command, ct);
+        return Ok(response);
     }
 }
