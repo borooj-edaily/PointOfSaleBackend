@@ -14,6 +14,26 @@ Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
+// DotNetEnv loads MYSQL_CONNECTION_STRING as a plain env var, but Dapper/IConfiguration
+// looks it up as ConnectionStrings:Default. Bridge the two explicitly here.
+var mysqlConnectionString = Environment.GetEnvironmentVariable("MYSQL_CONNECTION_STRING");
+if (!string.IsNullOrWhiteSpace(mysqlConnectionString))
+{
+    builder.Configuration["ConnectionStrings:Default"] = mysqlConnectionString;
+}
+
+// ---- CORS (allow the Vite dev server to call this API) ----
+const string FrontendCorsPolicy = "FrontendCorsPolicy";
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(FrontendCorsPolicy, policy =>
+    {
+        policy.WithOrigins("http://localhost:5173")
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
+
 // ---- Serilog ----
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
@@ -47,6 +67,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseHttpsRedirection();
+app.UseCors(FrontendCorsPolicy);
 app.UseAuthorization();
 app.MapControllers();
 
