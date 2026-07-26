@@ -13,27 +13,10 @@ using Serilog;
 Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
-
-// DotNetEnv loads MYSQL_CONNECTION_STRING as a plain env var, but Dapper/IConfiguration
-// looks it up as ConnectionStrings:Default. Bridge the two explicitly here.
-var mysqlConnectionString = Environment.GetEnvironmentVariable("MYSQL_CONNECTION_STRING");
-if (!string.IsNullOrWhiteSpace(mysqlConnectionString))
-{
-    builder.Configuration["ConnectionStrings:Default"] = mysqlConnectionString;
-}
-
-// ---- CORS (allow the Vite dev server to call this API) ----
-const string FrontendCorsPolicy = "FrontendCorsPolicy";
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy(FrontendCorsPolicy, policy =>
-    {
-        policy.WithOrigins("http://localhost:5173")
-              .AllowAnyHeader()
-              .AllowAnyMethod();
-    });
-});
-
+// Bridge .env's MYSQL_CONNECTION_STRING into the standard ConnectionStrings:Default
+// config key that PosDatabase.cs expects.
+builder.Configuration["ConnectionStrings:Default"] =
+    Environment.GetEnvironmentVariable("MYSQL_CONNECTION_STRING");
 // ---- Serilog ----
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
