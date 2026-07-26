@@ -1,4 +1,4 @@
-namespace POINTOFSALEBACKEND.Enums
+namespace Pos.Api.Enums
 {
     public enum SellByType
     {

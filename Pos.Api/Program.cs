@@ -12,7 +12,9 @@ using Serilog;
 // .env is git-ignored — never commit real credentials.
 Env.Load();
 
+
 var builder = WebApplication.CreateBuilder(args);
+
 
 // ---- Serilog ----
 Log.Logger = new LoggerConfiguration()
