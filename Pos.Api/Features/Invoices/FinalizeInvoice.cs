@@ -174,73 +174,23 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
             {
                 var product = productsById[item.ProductId];
 
-                // -----------------------------------------------------------
-                // FIX #3: reject explicitly if the product doesn't actually
-                // support the requested sale unit, instead of silently
-                // defaulting price to 0 or throwing an unhandled cast error.
-                // -----------------------------------------------------------
-                if (item.UnitSold == "package")
-                {
-                    if (product.PricePerPackage is null || product.PiecesPerPackage is null)
-                    {
-                        throw new BusinessRuleException($"Product {item.ProductId} is not sold by package.");
-                    }
-                }
-                else if (product.PricePerPiece is null)
-                {
-                    throw new BusinessRuleException($"Product {item.ProductId} is not sold by piece.");
-                }
-
-                int quantityInPieces = item.UnitSold == "package"
-                    ? item.Quantity * product.PiecesPerPackage!.Value
-                    : item.Quantity;
+                var line = InvoiceCalculator.BuildLineItem(item, product);
 
                 requestedPiecesByProduct[item.ProductId] =
-                    requestedPiecesByProduct.GetValueOrDefault(item.ProductId) + quantityInPieces;
+                    requestedPiecesByProduct.GetValueOrDefault(item.ProductId) + line.QuantityInPieces;
 
-                decimal unitPrice = item.UnitSold == "package"
-                    ? product.PricePerPackage!.Value
-                    : product.PricePerPiece!.Value;
+                subtotal += line.LineTotal;
 
-                decimal lineTotal = unitPrice * item.Quantity;
-                subtotal += lineTotal;
-
-                lineItems.Add((item.ProductId, item.UnitSold, item.Quantity, unitPrice, quantityInPieces, lineTotal));
+                lineItems.Add((line.ProductId, line.UnitSold, line.Quantity, line.UnitPrice, line.QuantityInPieces, line.LineTotal));
             }
 
             // ---------------------------------------------------------------
             // FIX #1: validate the AGGREGATED quantity per product against
             // stock (not per-line), now that we know the true total demand.
             // ---------------------------------------------------------------
-            foreach (var (productId, totalRequestedPieces) in requestedPiecesByProduct)
-            {
-                var available = productsById[productId].StockInPieces;
-                if (totalRequestedPieces > available)
-                {
-                    throw new BusinessRuleException(
-                        $"Insufficient stock for product {productId}. Available: {available}, requested: {totalRequestedPieces}.");
-                }
-            }
+            InvoiceCalculator.ValidateStock(requestedPiecesByProduct, productsById);
 
-            decimal discountAmount = request.DiscountType switch
-            {
-                "fixed" => request.DiscountValue ?? 0,
-                "percentage" => subtotal * (request.DiscountValue ?? 0) / 100,
-                _ => 0
-            };
-
-            // Small bonus fix tied to BR-11: a fixed discount can't be negative
-            // (which would increase the total) or exceed the subtotal (which
-            // would make total negative).
-            if (discountAmount < 0)
-            {
-                throw new BusinessRuleException("Discount value cannot be negative.");
-            }
-
-            if (discountAmount > subtotal)
-            {
-                throw new BusinessRuleException("Discount cannot exceed the invoice subtotal.");
-            }
+            decimal discountAmount = InvoiceCalculator.CalculateDiscountAmount(subtotal, request.DiscountType, request.DiscountValue);
 
             decimal total = subtotal - discountAmount;
 
