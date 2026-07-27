@@ -25,7 +25,7 @@ public class ExceptionHandlingMiddleware
         catch (ValidationException ex)
         {
             _logger.LogWarning(ex, "Validation failed for {Path}", context.Request.Path);
-            await WriteResponseAsync(context, (int)HttpStatusCode.BadRequest, ex.Message, new List<string> { ex.Message });
+            await WriteResponseAsync(context, (int)HttpStatusCode.BadRequest, "Validation failed.", ex.Errors);
         }
         catch (NotFoundException ex)
         {

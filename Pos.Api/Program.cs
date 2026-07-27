@@ -16,6 +16,10 @@ Env.Load();
 var builder = WebApplication.CreateBuilder(args);
 
 
+// Bridge .env's MYSQL_CONNECTION_STRING into the standard ConnectionStrings:Default
+// config key that PosDatabase.cs expects.
+builder.Configuration["ConnectionStrings:Default"] =
+    Environment.GetEnvironmentVariable("MYSQL_CONNECTION_STRING");
 // ---- Serilog ----
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
@@ -49,6 +53,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseHttpsRedirection();
+app.UseCors(FrontendCorsPolicy);
 app.UseAuthorization();
 app.MapControllers();
 
