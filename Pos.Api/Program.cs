@@ -12,7 +12,10 @@ using Serilog;
 // .env is git-ignored — never commit real credentials.
 Env.Load();
 
+
 var builder = WebApplication.CreateBuilder(args);
+
+
 // Bridge .env's MYSQL_CONNECTION_STRING into the standard ConnectionStrings:Default
 // config key that PosDatabase.cs expects.
 builder.Configuration["ConnectionStrings:Default"] =
