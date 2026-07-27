@@ -6,6 +6,8 @@
 -- Depends on: 002_CreateProductsTable
 -- ============================================================
 
+
+
 CREATE TABLE IF NOT EXISTS StockMovements (
     Id                  INT             NOT NULL AUTO_INCREMENT,
     ProductId           INT             NOT NULL,
