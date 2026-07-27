@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS Categories (
     Id                INT             NOT NULL AUTO_INCREMENT,
     Name              VARCHAR(100)    NOT NULL,
     IsActive          BOOLEAN         NOT NULL DEFAULT TRUE,
-
+   
     -- Audit Fields (من BaseEntity / AuditableEntity)
     CreatedAt         DATETIME(6)     NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     CreatedByUserId   INT             NULL,
