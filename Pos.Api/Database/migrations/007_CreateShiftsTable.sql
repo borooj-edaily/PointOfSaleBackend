@@ -1,3 +1,5 @@
+USE POSDB;
+
 CREATE TABLE Shifts (
     Id          INT AUTO_INCREMENT PRIMARY KEY,
     UserId      INT NOT NULL,

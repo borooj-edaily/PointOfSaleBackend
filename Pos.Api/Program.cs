@@ -13,6 +13,8 @@ using Serilog;
 Env.Load();
 
 
+const string FrontendCorsPolicy = "FrontendCorsPolicy";
+
 var builder = WebApplication.CreateBuilder(args);
 
 
@@ -20,6 +22,21 @@ var builder = WebApplication.CreateBuilder(args);
 // config key that PosDatabase.cs expects.
 builder.Configuration["ConnectionStrings:Default"] =
     Environment.GetEnvironmentVariable("MYSQL_CONNECTION_STRING");
+
+// ---- CORS (frontend dev server) ----
+// FIX: app.UseCors(FrontendCorsPolicy) below referenced a policy name that was
+// never declared or registered anywhere, which failed to compile. Registering
+// it here. Adjust the origin below if the frontend runs on a different port.
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(FrontendCorsPolicy, policy =>
+    {
+        policy.WithOrigins("http://localhost:5173")
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
+
 // ---- Serilog ----
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)

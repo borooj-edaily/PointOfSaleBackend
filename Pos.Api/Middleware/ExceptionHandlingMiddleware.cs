@@ -37,6 +37,11 @@ public class ExceptionHandlingMiddleware
             _logger.LogWarning(ex, "Duplicate resource for {Path}", context.Request.Path);
             await WriteResponseAsync(context, (int)HttpStatusCode.Conflict, ex.Message, new List<string> { ex.Message });
         }
+        catch (ForbiddenException ex)
+        {
+            _logger.LogWarning(ex, "Permission denied for {Path}", context.Request.Path);
+            await WriteResponseAsync(context, (int)HttpStatusCode.Forbidden, ex.Message, new List<string> { ex.Message });
+        }
         catch (BusinessException ex)
         {
             _logger.LogWarning(ex, "Business rule violation for {Path}", context.Request.Path);

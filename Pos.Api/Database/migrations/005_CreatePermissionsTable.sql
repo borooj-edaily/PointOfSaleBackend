@@ -1,3 +1,5 @@
+USE POSDB;
+
 CREATE TABLE Permissions (
     Id              INT AUTO_INCREMENT PRIMARY KEY,
     Name            VARCHAR(100)    NOT NULL UNIQUE,

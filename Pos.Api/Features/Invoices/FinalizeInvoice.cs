@@ -142,9 +142,9 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
             foreach (var productId in distinctProductIds)
             {
                 var product = await connection.QuerySingleOrDefaultAsync<ProductStockRow>(
-                    @"SELECT ProductId, IsActive, PricePerPiece, PricePerPackage, PiecesPerPackage, StockInPieces
+                    @"SELECT Id AS ProductId, IsActive, PricePerPiece, PricePerPackage, PiecesPerPackage, StockInPieces
                       FROM Products
-                      WHERE ProductId = @ProductId
+                      WHERE Id = @ProductId
                       FOR UPDATE",
                     new { ProductId = productId },
                     transaction);
@@ -241,7 +241,7 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
             foreach (var (productId, totalRequestedPieces) in requestedPiecesByProduct)
             {
                 await connection.ExecuteAsync(
-                    "UPDATE Products SET StockInPieces = StockInPieces - @Qty WHERE ProductId = @ProductId",
+                    "UPDATE Products SET StockInPieces = StockInPieces - @Qty WHERE Id = @ProductId",
                     new { Qty = totalRequestedPieces, ProductId = productId },
                     transaction);
             }
