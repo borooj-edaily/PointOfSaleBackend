@@ -23,6 +23,11 @@ public class InvoiceItemRequest
 
 public class FinalizeInvoiceResponse
 {
+    // Explicit success flag so this response shape mirrors ApiErrorResponse
+    // (which already has Success = false). Any 200 from this endpoint means
+    // Success = true; kept explicit here rather than implied by HTTP status
+    // alone, since that's what the API contract checklist calls for.
+    public bool Success { get; set; } = true;
     public int InvoiceId { get; set; }
     public int InvoiceNumber { get; set; }
     public decimal Subtotal { get; set; }
@@ -86,6 +91,21 @@ public class FinalizeInvoiceValidator : AbstractValidator<FinalizeInvoiceCommand
     }
 }
 
+/// <summary>
+/// Read-only projection of a Products row used during Finalize.
+/// NOTE: column names (SellBy/IsActive in particular) are assumed to match the
+/// Products table owned by Person B — adjust names here if they differ.
+/// </summary>
+public class ProductStockRow
+{
+    public int ProductId { get; set; }
+    public bool IsActive { get; set; }
+    public decimal? PricePerPiece { get; set; }
+    public decimal? PricePerPackage { get; set; }
+    public int? PiecesPerPackage { get; set; }
+    public int StockInPieces { get; set; }
+}
+
 public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, FinalizeInvoiceResponse>
 {
     private readonly IPosDatabase _database;
@@ -104,46 +124,73 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
 
         try
         {
+            // ---------------------------------------------------------------
+            // FIX #2 (race condition): lock every distinct product row up front,
+            // in a stable (ascending ProductId) order, so two concurrent
+            // Finalize calls can never both read the same "available" stock
+            // and both pass validation. Locking in a fixed order also avoids
+            // deadlocks between two invoices that share products.
+            // ---------------------------------------------------------------
+            var distinctProductIds = request.Items
+                .Select(i => i.ProductId)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
+
+            var productsById = new Dictionary<int, ProductStockRow>();
+
+            foreach (var productId in distinctProductIds)
+            {
+                var product = await connection.QuerySingleOrDefaultAsync<ProductStockRow>(
+                    @"SELECT ProductId, IsActive, PricePerPiece, PricePerPackage, PiecesPerPackage, StockInPieces
+                      FROM Products
+                      WHERE ProductId = @ProductId
+                      FOR UPDATE",
+                    new { ProductId = productId },
+                    transaction);
+
+                if (product is null)
+                {
+                    throw new NotFoundException($"Product {productId} not found.");
+                }
+
+                if (!product.IsActive)
+                {
+                    throw new BusinessRuleException($"Product {productId} is discontinued and cannot be sold.");
+                }
+
+                productsById[productId] = product;
+            }
+
             decimal subtotal = 0;
             var lineItems = new List<(int ProductId, string UnitSold, int Quantity, decimal UnitPrice, int QuantityInPieces, decimal LineTotal)>();
 
+            // Tracks total pieces requested per product ACROSS ALL LINES,
+            // so two lines for the same product (e.g. 1 piece + 1 package of
+            // the same item) are checked against stock together, not one at a time.
+            var requestedPiecesByProduct = new Dictionary<int, int>();
+
             foreach (var item in request.Items)
             {
-                var stock = await connection.QuerySingleOrDefaultAsync<dynamic>(
-                    "SELECT PricePerPiece, PricePerPackage, PiecesPerPackage, StockInPieces FROM Products WHERE ProductId = @ProductId",
-                    new { item.ProductId },
-                    transaction);
+                var product = productsById[item.ProductId];
 
-                if (stock is null)
-                {
-                    throw new NotFoundException($"Product {item.ProductId} not found.");
-                }
+                var line = InvoiceCalculator.BuildLineItem(item, product);
 
-                int quantityInPieces = item.UnitSold == "package"
-                    ? item.Quantity * (int)(stock.PiecesPerPackage ?? 0)
-                    : item.Quantity;
+                requestedPiecesByProduct[item.ProductId] =
+                    requestedPiecesByProduct.GetValueOrDefault(item.ProductId) + line.QuantityInPieces;
 
-                if (quantityInPieces > (int)stock.StockInPieces)
-                {
-                    throw new BusinessRuleException($"Insufficient stock for product {item.ProductId}. Available: {stock.StockInPieces}, requested: {quantityInPieces}.");
-                }
+                subtotal += line.LineTotal;
 
-                decimal unitPrice = item.UnitSold == "package"
-                    ? (decimal)(stock.PricePerPackage ?? 0)
-                    : (decimal)stock.PricePerPiece;
-
-                decimal lineTotal = unitPrice * item.Quantity;
-                subtotal += lineTotal;
-
-                lineItems.Add((item.ProductId, item.UnitSold, item.Quantity, unitPrice, quantityInPieces, lineTotal));
+                lineItems.Add((line.ProductId, line.UnitSold, line.Quantity, line.UnitPrice, line.QuantityInPieces, line.LineTotal));
             }
 
-            decimal discountAmount = request.DiscountType switch
-            {
-                "fixed" => request.DiscountValue ?? 0,
-                "percentage" => subtotal * (request.DiscountValue ?? 0) / 100,
-                _ => 0
-            };
+            // ---------------------------------------------------------------
+            // FIX #1: validate the AGGREGATED quantity per product against
+            // stock (not per-line), now that we know the true total demand.
+            // ---------------------------------------------------------------
+            InvoiceCalculator.ValidateStock(requestedPiecesByProduct, productsById);
+
+            decimal discountAmount = InvoiceCalculator.CalculateDiscountAmount(subtotal, request.DiscountType, request.DiscountValue);
 
             decimal total = subtotal - discountAmount;
 
@@ -186,10 +233,16 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
                         line.LineTotal
                     },
                     transaction);
+            }
 
+            // Deduct the AGGREGATED quantity per product exactly once, against
+            // the row we already locked with FOR UPDATE above — safe even
+            // under concurrent Finalize calls on the same product.
+            foreach (var (productId, totalRequestedPieces) in requestedPiecesByProduct)
+            {
                 await connection.ExecuteAsync(
-                    "UPDATE Products SET StockInPieces = StockInPieces - @QuantityInPieces WHERE ProductId = @ProductId",
-                    new { line.ProductId, line.QuantityInPieces },
+                    "UPDATE Products SET StockInPieces = StockInPieces - @Qty WHERE ProductId = @ProductId",
+                    new { Qty = totalRequestedPieces, ProductId = productId },
                     transaction);
             }
 
@@ -197,6 +250,7 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
 
             return new FinalizeInvoiceResponse
             {
+                Success = true,
                 InvoiceId = invoiceId,
                 InvoiceNumber = nextNumber,
                 Subtotal = subtotal,
