@@ -127,15 +127,6 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 // HTTPS
 app.UseHttpsRedirection();
-
-
-// CORS يجب أن يكون قبل Authentication
-app.UseCors(FrontendCorsPolicy);
-
-
-// JWT
-app.UseAuthentication();
-
 app.UseAuthorization();
 
 
