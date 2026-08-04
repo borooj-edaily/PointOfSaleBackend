@@ -1,8 +1,7 @@
 
-============================================================
 -- Migration: 001_CreateCategoriesTable
 -- Description: إنشاء جدول Categories - أبسط جدول، صفر Foreign Keys
--- ============================================================
+USE POSDB;
 
 CREATE TABLE IF NOT EXISTS Categories (
     Id                INT             NOT NULL AUTO_INCREMENT,

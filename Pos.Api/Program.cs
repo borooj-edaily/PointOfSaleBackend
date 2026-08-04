@@ -32,22 +32,78 @@ Log.Logger = new LoggerConfiguration()
     .Enrich.FromLogContext()
     .WriteTo.Console()
     .CreateLogger();
+
 builder.Host.UseSerilog();
 
-// ---- Controllers + Swagger ----
+
+// Controllers + Swagger
 builder.Services.AddControllers();
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// ---- Dapper / MySQL (NOT EF Core) ----
+
+// JWT Authentication
+builder.Services.AddScoped<JwtService>();
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters =
+            new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+
+                ValidIssuer =
+                    builder.Configuration["Jwt:Issuer"],
+
+                ValidAudience =
+                    builder.Configuration["Jwt:Audience"],
+
+                IssuerSigningKey =
+                    new SymmetricSecurityKey(
+                        Encoding.UTF8.GetBytes(
+                            builder.Configuration["Jwt:Key"]!
+                        ))
+            };
+    });
+
+
+// By default every endpoint requires a valid JWT unless explicitly
+// marked with [AllowAnonymous] (e.g. the login endpoint).
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build();
+});
+
+
+// Dapper + MySQL
 builder.Services.AddSingleton<IPosDatabase, PosDatabase>();
 
-// ---- MediatR ----
-builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(Assembly.GetExecutingAssembly()));
-builder.Services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
-// ---- FluentValidation ----
-builder.Services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
+// MediatR
+builder.Services.AddMediatR(cfg =>
+    cfg.RegisterServicesFromAssembly(
+        Assembly.GetExecutingAssembly()
+    ));
+
+builder.Services.AddTransient(
+    typeof(IPipelineBehavior<,>),
+    typeof(ValidationBehavior<,>)
+);
+
+
+// FluentValidation
+builder.Services.AddValidatorsFromAssembly(
+    Assembly.GetExecutingAssembly()
+);
+
 
 // ---- Users authentication and operation-level authorization ----
 var jwtSecret = builder.Configuration["Jwt:Secret"]
@@ -122,17 +178,24 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
+
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+
+// HTTPS
 app.UseHttpsRedirection();
 app.UseCors(FrontendCorsPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
+
+
 app.MapControllers();
 
 app.Run();
