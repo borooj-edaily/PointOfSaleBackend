@@ -1,8 +1,0 @@
-# .NET
-bin/
-obj/
-*.user
-
-# Environment
-.env
-appsettings.Development.json
