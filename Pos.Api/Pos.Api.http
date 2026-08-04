@@ -72,3 +72,37 @@ Content-Type: application/json
 }
 
 ###
+
+### 6) Exchange: swap invoice item #1 for a different product
+### (adjust InvoiceItemId/ReplacementProductId to real seeded ids first)
+POST {{Pos.Api_HostAddress}}/api/invoices/exchange
+Content-Type: application/json
+
+{
+  "invoiceItemId": 1,
+  "returnedQuantity": 1,
+  "replacementProductId": 2,
+  "replacementUnitSold": "piece",
+  "replacementQuantity": 1,
+  "processedBy": 1,
+  "reason": "Wrong size"
+}
+
+###
+
+### 7) Exchange rejected -> BR-09: user without 'process_return' permission
+### should get 403 Forbidden, not a generic error
+POST {{Pos.Api_HostAddress}}/api/invoices/exchange
+Content-Type: application/json
+
+{
+  "invoiceItemId": 1,
+  "returnedQuantity": 1,
+  "replacementProductId": 2,
+  "replacementUnitSold": "piece",
+  "replacementQuantity": 1,
+  "processedBy": 999,
+  "reason": "Wrong size"
+}
+
+###

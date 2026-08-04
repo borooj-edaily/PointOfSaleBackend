@@ -1,3 +1,5 @@
+USE POSDB;
+
 CREATE TABLE UserPermissions (
     UserId          INT NOT NULL,
     PermissionId    INT NOT NULL,

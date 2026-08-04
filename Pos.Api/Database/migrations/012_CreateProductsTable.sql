@@ -1,8 +1,8 @@
-============================================================
 -- Migration: 002_CreateProductsTable
 -- Description: إنشاء جدول Products - مرتبط بـ Categories عبر CategoryId
 -- Depends on: 001_CreateCategoriesTable
 -- ============================================================
+USE POSDB;
 
 CREATE TABLE IF NOT EXISTS Products (
     Id                  INT             NOT NULL AUTO_INCREMENT,

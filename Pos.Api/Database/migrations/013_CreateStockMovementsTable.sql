@@ -1,10 +1,10 @@
-============================================================
 -- Migration: 003_CreateStockMovementsTable
 -- Description: إنشاء جدول StockMovements - سجل تاريخي ثابت (Immutable)
 --              لكل حركة على مخزون أي منتج. لا يوجد UPDATE أو DELETE
 --              على هذا الجدول على مستوى التطبيق أبداً.
 -- Depends on: 002_CreateProductsTable
 -- ============================================================
+USE POSDB;
 
 
 
