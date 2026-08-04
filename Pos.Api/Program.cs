@@ -15,33 +15,12 @@ using Serilog;
 
 Env.Load();
 
-const string FrontendCorsPolicy = "FrontendCorsPolicy";
-
 var builder = WebApplication.CreateBuilder(args);
 
-
-// Connection String from .env
 builder.Configuration["ConnectionStrings:Default"] =
     Environment.GetEnvironmentVariable("MYSQL_CONNECTION_STRING");
 
-
-// CORS
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy(FrontendCorsPolicy, policy =>
-    {
-        policy
-            .WithOrigins(
-                "http://localhost:5173"
-            )
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
-    });
-});
-
-
-// Serilog
+// ---- Serilog ----
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
@@ -119,6 +98,19 @@ builder.Services.AddValidatorsFromAssembly(
     Assembly.GetExecutingAssembly()
 );
 
+
+// ---- CORS ----
+const string FrontendCorsPolicy = "FrontendCorsPolicy";
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(FrontendCorsPolicy, policy =>
+    {
+        policy.WithOrigins("http://localhost:5173") // Vite default port
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
 
 var app = builder.Build();
 
