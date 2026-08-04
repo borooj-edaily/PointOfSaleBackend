@@ -1,15 +1,10 @@
 -- Bootstrap admin account so someone can log in for the first time.
--- IMPORTANT: 'REPLACE_WITH_REAL_BCRYPT_HASH' below is NOT a usable hash.
--- Generate a real one once BCrypt.Net-Next is installed: temporarily add this
--- line anywhere early in Program.cs, run the API once, copy the printed hash
--- into this file below, then delete that line again:
---
---   Console.WriteLine(BCrypt.Net.BCrypt.HashPassword("Admin@123"));
---
--- Change this password after the first real login.
+-- TEST/DEV ONLY credentials — change this password after the first real login:
+--   Username: admin
+--   Password: 123456
 
 INSERT INTO Users (FullName, Username, PasswordHash, Role, IsActive) VALUES
-('System Admin', 'admin', 'REPLACE_WITH_REAL_BCRYPT_HASH', 'Admin', TRUE);
+('System Admin', 'admin', '$2a$11$2.rKTdEy0FODC6dL2KGJfONHGes3PjCguF6nRbJpAPsm0NlcUGy0.', 'Admin', TRUE);
 
 -- Give the admin every permission that exists
 INSERT INTO UserPermissions (UserId, PermissionId)
