@@ -4,6 +4,7 @@ using Pos.Api.Features.Products.Create;
 using Pos.Api.Features.Products.Deactivate;
 using Pos.Api.Features.Products.GetAll;
 using Pos.Api.Features.Products.GetById;
+using Pos.Api.Features.Products.LowStock;
 
 namespace Pos.Api.Controllers
 {
@@ -40,6 +41,19 @@ namespace Pos.Api.Controllers
 
             return Ok(result);
         }
+        [HttpGet("low-stock")]
+        public async Task<IActionResult> GetLowStock(
+             [FromQuery] int threshold = 10,
+             [FromQuery] bool onlyOutOfStock = false)
+        {
+            var result = await _mediator.Send(new GetLowStockProductsQuery
+            {
+                Threshold = threshold,
+                OnlyOutOfStock = onlyOutOfStock
+            });
+
+            return Ok(result);
+        }
 
         [HttpGet("{id:int}")]
         public async Task<IActionResult> GetById(int id)
@@ -59,5 +73,6 @@ namespace Pos.Api.Controllers
             await _mediator.Send(command);
             return NoContent();
         }
+
     }
 }
