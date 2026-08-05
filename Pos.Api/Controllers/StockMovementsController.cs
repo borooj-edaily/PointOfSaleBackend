@@ -1,5 +1,6 @@
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using Pos.Api.Features.StockMovements.CurrentStock;
 using Pos.Api.Features.StockMovements.Deduct;
 using Pos.Api.Features.StockMovements.GetHistory;
 using Pos.Api.Features.StockMovements.Restock;
@@ -15,6 +16,12 @@ namespace Pos.Api.Controllers
         public StockMovementsController(IMediator mediator)
         {
             _mediator = mediator;
+        }
+         [HttpGet]
+        public async Task<IActionResult> GetCurrentStock(int productId)
+        {
+            var result = await _mediator.Send(new GetCurrentStockQuery { ProductId = productId });
+            return Ok(result);
         }
 
         [HttpPost("restock")]
