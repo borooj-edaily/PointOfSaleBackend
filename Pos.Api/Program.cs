@@ -16,6 +16,7 @@ using Pos.Api.Security;
 using Pos.Api.Services;
 using Serilog;
 
+
 Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
