@@ -16,6 +16,7 @@ using Pos.Api.Security;
 using Pos.Api.Services;
 using Serilog;
 
+
 Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
@@ -167,22 +168,35 @@ builder.Services.AddSingleton<
 
 builder.Services.AddAuthorization(options =>
 {
-    // All endpoints require authentication unless marked [AllowAnonymous].
     options.FallbackPolicy =
         new AuthorizationPolicyBuilder()
             .RequireAuthenticatedUser()
             .Build();
 
-    options.AddPolicy(
+    string[] permissions =
+    {
+        Permissions.CreateInvoice,
+        Permissions.ProcessReturn,
+        Permissions.PrintInvoice,
+        Permissions.EditPrice,
+        Permissions.ManageInventory,
+        Permissions.ManageProducts,
         Permissions.ManageUsers,
-        policy =>
-            policy
+        Permissions.ViewAllInvoices,
+        Permissions.ViewReports,
+        Permissions.ViewAuditLog
+    };
+
+    foreach (var permission in permissions)
+    {
+        options.AddPolicy(
+            permission,
+            policy => policy
                 .RequireAuthenticatedUser()
                 .AddRequirements(
-                    new PermissionRequirement(
-                        Permissions.ManageUsers)));
+                    new PermissionRequirement(permission)));
+    }
 });
-
 // CORS
 const string FrontendCorsPolicy =
     "FrontendCorsPolicy";
@@ -214,9 +228,10 @@ app.UseMiddleware<
 
 app.UseHttpsRedirection();
 app.UseCors(FrontendCorsPolicy);
+
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<AuditLogMiddleware>();
 
 app.MapControllers();
-
 app.Run();
