@@ -1,9 +1,11 @@
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Pos.Api.Features.StockMovements.CurrentStock;
 using Pos.Api.Features.StockMovements.Deduct;
 using Pos.Api.Features.StockMovements.GetHistory;
 using Pos.Api.Features.StockMovements.Restock;
+using Pos.Api.Security;
 
 namespace Pos.Api.Controllers
 {
@@ -17,13 +19,15 @@ namespace Pos.Api.Controllers
         {
             _mediator = mediator;
         }
-         [HttpGet]
+
+        [HttpGet]
         public async Task<IActionResult> GetCurrentStock(int productId)
         {
             var result = await _mediator.Send(new GetCurrentStockQuery { ProductId = productId });
             return Ok(result);
         }
 
+        [Authorize(Policy = Permissions.ManageInventory)]
         [HttpPost("restock")]
         public async Task<IActionResult> Restock(int productId, [FromBody] RestockCommand command)
         {
@@ -32,6 +36,7 @@ namespace Pos.Api.Controllers
             return Ok(new { movementId });
         }
 
+        [Authorize(Policy = Permissions.ManageInventory)]
         [HttpPost("deduct")]
         public async Task<IActionResult> Deduct(int productId, [FromBody] DeductStockCommand command)
         {
@@ -40,6 +45,7 @@ namespace Pos.Api.Controllers
             return Ok(new { movementId });
         }
 
+        [Authorize(Policy = Permissions.ManageInventory)]
         [HttpGet("history")]
         public async Task<IActionResult> GetHistory(int productId)
         {
