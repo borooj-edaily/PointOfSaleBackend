@@ -1,6 +1,8 @@
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Pos.Api.Features.Dashboard.GetStats;
+using Pos.Api.Security;
 
 namespace Pos.Api.Controllers
 {
@@ -15,6 +17,7 @@ namespace Pos.Api.Controllers
             _mediator = mediator;
         }
 
+        [Authorize(Policy = Permissions.ViewReports)]
         [HttpGet("stats")]
         public async Task<IActionResult> GetStats()
         {

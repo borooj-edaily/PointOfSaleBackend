@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -32,6 +33,7 @@ namespace Pos.Api.Controllers
         public async Task<IActionResult> Restock(int productId, [FromBody] RestockCommand command)
         {
             command.ProductId = productId;
+            command.CreatedByUserId = CurrentUserId();
             var movementId = await _mediator.Send(command);
             return Ok(new { movementId });
         }
@@ -41,6 +43,7 @@ namespace Pos.Api.Controllers
         public async Task<IActionResult> Deduct(int productId, [FromBody] DeductStockCommand command)
         {
             command.ProductId = productId;
+            command.CreatedByUserId = CurrentUserId();
             var movementId = await _mediator.Send(command);
             return Ok(new { movementId });
         }
@@ -51,6 +54,16 @@ namespace Pos.Api.Controllers
         {
             var result = await _mediator.Send(new GetStockHistoryQuery { ProductId = productId });
             return Ok(result);
+        }
+
+        private int CurrentUserId()
+        {
+            var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (!int.TryParse(value, out var userId))
+                throw new UnauthorizedAccessException("The user ID claim is missing.");
+
+            return userId;
         }
     }
 }

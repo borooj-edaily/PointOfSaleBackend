@@ -1,6 +1,7 @@
 using Dapper;
 using FluentValidation;
 using MediatR;
+using Pos.Api.Enums;
 using Pos.Api.Exceptions;
 using Pos.Api.Interfaces;
 
@@ -261,6 +262,8 @@ public class ExchangeInvoiceItemHandler
                     request.ReturnedQuantity,
                     oldProduct.PiecesPerPackage);
 
+            var oldBalanceBeforeInPieces = oldProduct.StockInPieces;
+
             await connection.ExecuteAsync(
                 """
                 UPDATE Products
@@ -276,6 +279,30 @@ public class ExchangeInvoiceItemHandler
                 transaction);
 
             oldProduct.StockInPieces += returnedInPieces;
+
+            // نفس نمط Restock/Deduct: التبديل بيتكوّن من حركتين على StockMovements —
+            // إرجاع للصنف القديم وبيع للصنف البديل.
+            await connection.ExecuteAsync(
+                """
+                INSERT INTO StockMovements
+                    (ProductId, Type, QuantityInPieces, BalanceBefore, BalanceAfter,
+                     Reason, ReferenceInvoiceId, CreatedAt, CreatedByUserId)
+                VALUES
+                    (@ProductId, @Type, @QuantityInPieces, @BalanceBefore, @BalanceAfter,
+                     @Reason, @ReferenceInvoiceId, UTC_TIMESTAMP(6), @CreatedByUserId);
+                """,
+                new
+                {
+                    ProductId = oldProductId,
+                    Type = (int)StockMovementType.Return,
+                    QuantityInPieces = returnedInPieces,
+                    BalanceBefore = oldBalanceBeforeInPieces,
+                    BalanceAfter = oldProduct.StockInPieces,
+                    request.Reason,
+                    ReferenceInvoiceId = (int)invoiceItem.InvoiceId,
+                    CreatedByUserId = request.ProcessedBy
+                },
+                transaction);
 
             var returnedItemValue =
                 (decimal)invoiceItem.UnitPriceSnapshot *
@@ -301,6 +328,8 @@ public class ExchangeInvoiceItemHandler
                 replacementInPieces,
                 replacementProduct.StockInPieces);
 
+            var replacementBalanceBeforeInPieces = replacementProduct.StockInPieces;
+
             await connection.ExecuteAsync(
                 """
                 UPDATE Products
@@ -312,6 +341,27 @@ public class ExchangeInvoiceItemHandler
                 {
                     ReplacementInPieces = replacementInPieces,
                     ProductId = request.ReplacementProductId
+                },
+                transaction);
+
+            await connection.ExecuteAsync(
+                """
+                INSERT INTO StockMovements
+                    (ProductId, Type, QuantityInPieces, BalanceBefore, BalanceAfter,
+                     Reason, ReferenceInvoiceId, CreatedAt, CreatedByUserId)
+                VALUES
+                    (@ProductId, @Type, @QuantityInPieces, @BalanceBefore, @BalanceAfter,
+                     NULL, @ReferenceInvoiceId, UTC_TIMESTAMP(6), @CreatedByUserId);
+                """,
+                new
+                {
+                    ProductId = request.ReplacementProductId,
+                    Type = (int)StockMovementType.Sale,
+                    QuantityInPieces = replacementInPieces,
+                    BalanceBefore = replacementBalanceBeforeInPieces,
+                    BalanceAfter = replacementBalanceBeforeInPieces - replacementInPieces,
+                    ReferenceInvoiceId = (int)invoiceItem.InvoiceId,
+                    CreatedByUserId = request.ProcessedBy
                 },
                 transaction);
 
