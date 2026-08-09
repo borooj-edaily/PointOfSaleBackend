@@ -2,6 +2,7 @@ using Dapper;
 using MediatR;
 using Pos.Api.Exceptions;
 using Pos.Api.Interfaces;
+using Pos.Api.Security;
 
 namespace Pos.Api.Features.Users;
 
@@ -22,9 +23,15 @@ public sealed class CreateUserHandler : IRequestHandler<CreateUserCommand, UserD
             if (duplicate != 0)
                 throw new DuplicateResourceException("Username already exists.");
 
-            var permissionIds = (request.PermissionIds ?? Array.Empty<int>())
-                .Distinct().ToArray();
-            await ValidatePermissionIds(db, tx, permissionIds);
+            var permissionIds = request.Role == "Admin"
+                ? await GetAllPermissionIds(db, tx)
+                : (request.PermissionIds ?? Array.Empty<int>()).Distinct().ToArray();
+
+            if (request.Role != "Admin")
+            {
+                await ValidatePermissionIds(db, tx, permissionIds);
+                await ValidateRolePermissions(db, tx, request.Role, permissionIds);
+            }
 
             var userId = await db.ExecuteScalarAsync<int>("""
                 INSERT INTO Users
@@ -69,6 +76,35 @@ public sealed class CreateUserHandler : IRequestHandler<CreateUserCommand, UserD
             throw new Pos.Api.Exceptions.ValidationException(
                 "One or more permission IDs are invalid.");
     }
+
+    internal static async Task ValidateRolePermissions(
+        System.Data.IDbConnection db,
+        System.Data.IDbTransaction tx,
+        string role,
+        int[] permissionIds)
+    {
+        if (permissionIds.Length == 0) return;
+        if (!RolePermissions.AllowedByRole.ContainsKey(role)) return;
+
+        var names = await db.QueryAsync<string>(
+            "SELECT Name FROM Permissions WHERE Id IN @Ids;",
+            new { Ids = permissionIds }, tx);
+
+        var disallowed = RolePermissions.Disallowed(role, names);
+        if (disallowed.Count > 0)
+            throw new BusinessRuleException(
+                $"Role '{role}' cannot be assigned the following permission(s): " +
+                string.Join(", ", disallowed) +
+                ". Use the 'Custom' role for non-standard permission combinations.");
+    }
+
+    internal static async Task<int[]> GetAllPermissionIds(
+        System.Data.IDbConnection db,
+        System.Data.IDbTransaction tx)
+    {
+        var ids = await db.QueryAsync<int>("SELECT Id FROM Permissions;", transaction: tx);
+        return ids.ToArray();
+    }
 }
 
 public sealed class UpdateUserHandler : IRequestHandler<UpdateUserCommand, UserDto>
@@ -105,11 +141,40 @@ public sealed class UpdateUserHandler : IRequestHandler<UpdateUserCommand, UserD
                         "The last active admin cannot lose the Admin role.");
             }
 
+            if (request.Role != current.Role &&
+                RolePermissions.AllowedByRole.ContainsKey(request.Role))
+            {
+                var currentPermissionNames = await db.QueryAsync<string>("""
+                    SELECT p.Name FROM Permissions p
+                    JOIN UserPermissions up ON up.PermissionId = p.Id
+                    WHERE up.UserId = @Id;
+                    """, new { request.Id }, tx);
+
+                var disallowed = RolePermissions.Disallowed(
+                    request.Role, currentPermissionNames);
+                if (disallowed.Count > 0)
+                    throw new BusinessRuleException(
+                        $"Cannot change role to '{request.Role}': the employee " +
+                        "currently holds permission(s) not allowed for that role (" +
+                        string.Join(", ", disallowed) +
+                        "). Update their permissions first.");
+            }
+
             await db.ExecuteAsync("""
                 UPDATE Users
                 SET FullName = @FullName, Username = @Username, Role = @Role
                 WHERE Id = @Id;
                 """, request, tx);
+
+            if (request.Role == "Admin")
+            {
+                var allPermissionIds = await CreateUserHandler.GetAllPermissionIds(db, tx);
+                foreach (var permissionId in allPermissionIds)
+                    await db.ExecuteAsync("""
+                        INSERT IGNORE INTO UserPermissions (UserId, PermissionId)
+                        VALUES (@Id, @permissionId);
+                        """, new { request.Id, permissionId }, tx);
+            }
 
             if (!string.IsNullOrWhiteSpace(request.NewPassword))
             {
@@ -156,14 +221,20 @@ public sealed class SetUserPermissionsHandler
         using var tx = db.BeginTransaction();
         try
         {
-            var exists = await db.ExecuteScalarAsync<int>(
-                "SELECT COUNT(*) FROM Users WHERE Id = @Id;",
-                new { request.Id }, tx);
-            if (exists == 0)
-                throw new NotFoundException($"User {request.Id} was not found.");
+            var role = await db.QuerySingleOrDefaultAsync<string>(
+                "SELECT Role FROM Users WHERE Id = @Id;",
+                new { request.Id }, tx)
+                ?? throw new NotFoundException($"User {request.Id} was not found.");
+
+            if (role == "Admin")
+                throw new BusinessRuleException(
+                    "Admin always has every permission and cannot be restricted. " +
+                    "Change the employee's role away from Admin first if you want " +
+                    "to limit their access.");
 
             var permissionIds = request.PermissionIds.Distinct().ToArray();
             await CreateUserHandler.ValidatePermissionIds(db, tx, permissionIds);
+            await CreateUserHandler.ValidateRolePermissions(db, tx, role, permissionIds);
 
             await db.ExecuteAsync(
                 "DELETE FROM UserPermissions WHERE UserId = @Id;",
@@ -173,7 +244,6 @@ public sealed class SetUserPermissionsHandler
                     "INSERT INTO UserPermissions (UserId, PermissionId) VALUES (@Id, @permissionId);",
                     new { request.Id, permissionId }, tx);
 
-            // Existing token claims may contain old permissions.
             await db.ExecuteAsync(
                 "DELETE FROM UserSessions WHERE UserId = @Id;",
                 new { request.Id }, tx);
@@ -241,4 +311,3 @@ public sealed class SetUserActiveHandler : IRequestHandler<SetUserActiveCommand>
         public bool IsActive { get; init; }
     }
 }
-

@@ -1,9 +1,13 @@
+using System.Security.Claims;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Pos.Api.Features.Categories.Create;
 using Pos.Api.Features.Categories.Deactivate;
 using Pos.Api.Features.Categories.GetAll;
 using Pos.Api.Features.Categories.GetById;
+using Pos.Api.Features.Categories.Update;
+using Pos.Api.Security;
 
 namespace Pos.Api.Controllers
 {
@@ -18,13 +22,17 @@ namespace Pos.Api.Controllers
             _mediator = mediator;
         }
 
+        [Authorize(Policy = Permissions.ManageProducts)]
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CreateCategoryCommand command)
         {
+            command.CreatedByUserId = CurrentUserId();
+
             var newId = await _mediator.Send(command);
             return CreatedAtAction(nameof(GetById), new { id = newId }, new { id = newId });
         }
 
+        // القراءة متاحة لأي مستخدم مسجّل دخول (الكاشير محتاجها لعرض الكاتيجوريز بشاشة البيع).
         [HttpGet]
         public async Task<IActionResult> GetAll([FromQuery] bool onlyActive = false)
         {
@@ -43,12 +51,34 @@ namespace Pos.Api.Controllers
             return Ok(result);
         }
 
+        [Authorize(Policy = Permissions.ManageProducts)]
+        [HttpPut("{id:int}")]
+        public async Task<IActionResult> Update(int id, [FromBody] UpdateCategoryCommand command)
+        {
+            command.Id = id;
+            command.UpdatedByUserId = CurrentUserId();
+            await _mediator.Send(command);
+            return NoContent();
+        }
+
+        [Authorize(Policy = Permissions.ManageProducts)]
         [HttpPatch("{id:int}/deactivate")]
         public async Task<IActionResult> Deactivate(int id, [FromBody] DeactivateCategoryCommand command)
         {
             command.Id = id;
+            command.UpdatedByUserId = CurrentUserId();
             await _mediator.Send(command);
             return NoContent();
+        }
+
+        private int CurrentUserId()
+        {
+            var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (!int.TryParse(value, out var userId))
+                throw new UnauthorizedAccessException("The user ID claim is missing.");
+
+            return userId;
         }
     }
 }

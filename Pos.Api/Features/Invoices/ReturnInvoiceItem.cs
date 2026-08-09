@@ -1,6 +1,7 @@
 using Dapper;
 using FluentValidation;
 using MediatR;
+using Pos.Api.Enums;
 using Pos.Api.Exceptions;
 using Pos.Api.Interfaces;
 
@@ -109,7 +110,7 @@ public class ReturnInvoiceItemHandler : IRequestHandler<ReturnInvoiceItemCommand
 
             // Lock the product row for the stock update (BR-07 restock, BR-03 atomicity).
             var product = await connection.QuerySingleOrDefaultAsync<dynamic>(
-                "SELECT PiecesPerPackage FROM Products WHERE Id = @ProductId FOR UPDATE",
+                "SELECT PiecesPerPackage, StockInPieces FROM Products WHERE Id = @ProductId FOR UPDATE",
                 new { ProductId = (int)row.ProductId },
                 transaction);
 
@@ -126,6 +127,29 @@ public class ReturnInvoiceItemHandler : IRequestHandler<ReturnInvoiceItemCommand
             await connection.ExecuteAsync(
                 "UPDATE Products SET StockInPieces = StockInPieces + @ReturnedInPieces WHERE Id = @ProductId",
                 new { ReturnedInPieces = returnedInPieces, ProductId = (int)row.ProductId },
+                transaction);
+
+            int balanceBeforeInPieces = (int)product.StockInPieces;
+
+            // نفس نمط Restock/Deduct: أي تغيير على المخزون لازم يترك أثر بسجل StockMovements.
+            await connection.ExecuteAsync(
+                @"INSERT INTO StockMovements
+                    (ProductId, Type, QuantityInPieces, BalanceBefore, BalanceAfter,
+                     Reason, ReferenceInvoiceId, CreatedAt, CreatedByUserId)
+                  VALUES
+                    (@ProductId, @Type, @QuantityInPieces, @BalanceBefore, @BalanceAfter,
+                     @Reason, @ReferenceInvoiceId, UTC_TIMESTAMP(6), @CreatedByUserId)",
+                new
+                {
+                    ProductId = (int)row.ProductId,
+                    Type = (int)StockMovementType.Return,
+                    QuantityInPieces = returnedInPieces,
+                    BalanceBefore = balanceBeforeInPieces,
+                    BalanceAfter = balanceBeforeInPieces + returnedInPieces,
+                    request.Reason,
+                    ReferenceInvoiceId = (int)row.InvoiceId,
+                    CreatedByUserId = request.ProcessedBy
+                },
                 transaction);
 
             // Auto-recalculate the invoice total.

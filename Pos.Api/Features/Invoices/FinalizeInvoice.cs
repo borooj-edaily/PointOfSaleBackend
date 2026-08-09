@@ -1,6 +1,7 @@
 using Dapper;
 using FluentValidation;
 using MediatR;
+using Pos.Api.Enums;
 using Pos.Api.Exceptions;
 using Pos.Api.Interfaces;
 
@@ -115,7 +116,7 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
         try
         {
             decimal subtotal = 0;
-            var lineItems = new List<(int ProductId, string UnitSold, int Quantity, decimal UnitPrice, int QuantityInPieces, decimal LineTotal)>();
+            var lineItems = new List<(int ProductId, string UnitSold, int Quantity, decimal UnitPrice, int QuantityInPieces, decimal LineTotal, int BalanceBeforeInPieces)>();
 
             foreach (var item in request.Items)
             {
@@ -154,7 +155,7 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
                 decimal lineTotal = InvoiceCalculator.CalculateLineTotal(unitPrice, item.Quantity);
                 subtotal += lineTotal;
 
-                lineItems.Add((item.ProductId, item.UnitSold, item.Quantity, unitPrice, quantityInPieces, lineTotal));
+                lineItems.Add((item.ProductId, item.UnitSold, item.Quantity, unitPrice, quantityInPieces, lineTotal, (int)stock.StockInPieces));
             }
 
             // BR-11: invoice-level discount only; can never push total below zero.
@@ -204,6 +205,27 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
                 await connection.ExecuteAsync(
                     "UPDATE Products SET StockInPieces = StockInPieces - @QuantityInPieces WHERE Id = @ProductId",
                     new { line.ProductId, line.QuantityInPieces },
+                    transaction);
+
+                // كل سطر مبيع لازم يترك أثر بسجل StockMovements (نفس نمط Restock/Deduct)،
+                // حتى يضل تاريخ المخزون كامل وقابل للتدقيق.
+                await connection.ExecuteAsync(
+                    @"INSERT INTO StockMovements
+                        (ProductId, Type, QuantityInPieces, BalanceBefore, BalanceAfter,
+                         Reason, ReferenceInvoiceId, CreatedAt, CreatedByUserId)
+                      VALUES
+                        (@ProductId, @Type, @QuantityInPieces, @BalanceBefore, @BalanceAfter,
+                         NULL, @ReferenceInvoiceId, UTC_TIMESTAMP(6), @CreatedByUserId)",
+                    new
+                    {
+                        line.ProductId,
+                        Type = (int)StockMovementType.Sale,
+                        line.QuantityInPieces,
+                        BalanceBefore = line.BalanceBeforeInPieces,
+                        BalanceAfter = line.BalanceBeforeInPieces - line.QuantityInPieces,
+                        ReferenceInvoiceId = invoiceId,
+                        CreatedByUserId = request.CashierId
+                    },
                     transaction);
             }
 
