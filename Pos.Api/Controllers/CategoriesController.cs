@@ -8,6 +8,8 @@ using Pos.Api.Features.Categories.GetAll;
 using Pos.Api.Features.Categories.GetById;
 using Pos.Api.Features.Categories.Update;
 using Pos.Api.Security;
+using Pos.Api.Features.Categories.Activate;
+
 
 namespace Pos.Api.Controllers
 {
@@ -64,6 +66,16 @@ namespace Pos.Api.Controllers
         [Authorize(Policy = Permissions.ManageProducts)]
         [HttpPatch("{id:int}/deactivate")]
         public async Task<IActionResult> Deactivate(int id, [FromBody] DeactivateCategoryCommand command)
+        {
+            command.Id = id;
+            command.UpdatedByUserId = CurrentUserId();
+            await _mediator.Send(command);
+            return NoContent();
+        }
+
+        [Authorize(Policy = Permissions.ManageProducts)]
+        [HttpPatch("{id:int}/activate")]
+        public async Task<IActionResult> Activate(int id, [FromBody] ActivateCategoryCommand command)
         {
             command.Id = id;
             command.UpdatedByUserId = CurrentUserId();

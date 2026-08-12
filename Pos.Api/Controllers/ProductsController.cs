@@ -2,6 +2,7 @@ using System.Security.Claims;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Pos.Api.Features.Products.Activate;
 using Pos.Api.Features.Products.Create;
 using Pos.Api.Features.Products.Deactivate;
 using Pos.Api.Features.Products.GetAll;
@@ -90,6 +91,16 @@ namespace Pos.Api.Controllers
         [Authorize(Policy = Permissions.ManageProducts)]
         [HttpPatch("{id:int}/deactivate")]
         public async Task<IActionResult> Deactivate(int id, [FromBody] DeactivateProductCommand command)
+        {
+            command.Id = id;
+            command.UpdatedByUserId = CurrentUserId();
+            await _mediator.Send(command);
+            return NoContent();
+        }
+
+        [Authorize(Policy = Permissions.ManageProducts)]
+        [HttpPatch("{id:int}/activate")]
+        public async Task<IActionResult> Activate(int id, [FromBody] ActivateProductCommand command)
         {
             command.Id = id;
             command.UpdatedByUserId = CurrentUserId();
