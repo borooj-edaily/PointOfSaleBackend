@@ -24,14 +24,39 @@ namespace Pos.Api.Features.Categories.Deactivate
             if (exists == 0)
                 throw new NotFoundException($"لا يوجد كاتيجوري بالمعرف {request.Id}");
 
-            const string updateSql = @"
-                UPDATE Categories
-                SET IsActive = FALSE,
-                    UpdatedAt = UTC_TIMESTAMP(6),
-                    UpdatedByUserId = @UpdatedByUserId
-                WHERE Id = @Id;";
+            connection.Open();
+            using var transaction = connection.BeginTransaction();
+            try
+            {
+                // 1) عطّل الكاتيجوري نفسها
+                const string deactivateCategorySql = @"
+                    UPDATE Categories
+                    SET IsActive = FALSE,
+                        UpdatedAt = UTC_TIMESTAMP(6),
+                        UpdatedByUserId = @UpdatedByUserId
+                    WHERE Id = @Id;";
 
-            await connection.ExecuteAsync(updateSql, new { request.Id, request.UpdatedByUserId });
+                await connection.ExecuteAsync(deactivateCategorySql,
+                    new { request.Id, request.UpdatedByUserId }, transaction);
+
+                // 2) عطّل كل الأصناف الفعّالة يلي جوا هاي الكاتيجوري (Cascade)
+                const string deactivateProductsSql = @"
+                    UPDATE Products
+                    SET IsActive = FALSE,
+                        UpdatedAt = UTC_TIMESTAMP(6),
+                        UpdatedByUserId = @UpdatedByUserId
+                    WHERE CategoryId = @Id AND IsActive = TRUE;";
+
+                await connection.ExecuteAsync(deactivateProductsSql,
+                    new { request.Id, request.UpdatedByUserId }, transaction);
+
+                transaction.Commit();
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
 
             return Unit.Value;
         }

@@ -18,13 +18,18 @@ namespace Pos.Api.Features.Categories.GetAll
             using var connection = _database.Open();
 
             var sql = @"
-                SELECT Id, Name, IsActive
-                FROM Categories";
+                SELECT
+                    c.Id, c.Name, c.IsActive,
+                    COUNT(p.Id) AS ProductsCount
+                FROM Categories c
+                LEFT JOIN Products p ON p.CategoryId = c.Id";
 
             if (request.OnlyActive)
-                sql += " WHERE IsActive = TRUE";
+                sql += " WHERE c.IsActive = TRUE";
 
-            sql += " ORDER BY Name;";
+            sql += @"
+                GROUP BY c.Id, c.Name, c.IsActive
+                ORDER BY c.Name;";
 
             var result = await connection.QueryAsync<CategoryDto>(sql);
             return result.ToList();
