@@ -5,6 +5,7 @@ namespace Pos.Api.Security;
 public static class Permissions
 {
     public const string CreateInvoice = "create_invoice";
+    public const string ProcessExchange = "process_exchange";
     public const string ProcessReturn = "process_return";
     public const string PrintInvoice = "print_invoice";
     public const string EditPrice = "edit_price";

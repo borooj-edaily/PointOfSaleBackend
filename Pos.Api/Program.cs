@@ -175,8 +175,10 @@ builder.Services.AddAuthorization(options =>
 
     string[] permissions =
     {
+        
         Permissions.CreateInvoice,
         Permissions.ProcessReturn,
+        Permissions.ProcessExchange,
         Permissions.PrintInvoice,
         Permissions.EditPrice,
         Permissions.ManageInventory,
