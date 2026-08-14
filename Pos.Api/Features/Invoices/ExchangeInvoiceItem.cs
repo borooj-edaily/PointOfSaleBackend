@@ -127,6 +127,10 @@ public class ExchangeInvoiceItemHandler
 
         try
         {
+            // ============================================================
+            // 1. Check user
+            // ============================================================
+
             var user = await connection.QuerySingleOrDefaultAsync<dynamic>(
                 """
                 SELECT IsActive
@@ -148,6 +152,11 @@ public class ExchangeInvoiceItemHandler
                     "This user account is inactive and cannot process exchanges.");
             }
 
+            // ============================================================
+            // 2. Check EXCHANGE permission
+            //    Only users with process_exchange can exchange
+            // ============================================================
+
             var hasPermission =
                 await connection.QuerySingleAsync<int>(
                     """
@@ -156,7 +165,7 @@ public class ExchangeInvoiceItemHandler
                     JOIN Permissions p
                         ON p.Id = up.PermissionId
                     WHERE up.UserId = @ProcessedBy
-                      AND p.Name = 'process_return';
+                      AND p.Name = 'process_exchange';
                     """,
                     new { request.ProcessedBy },
                     transaction);
@@ -166,6 +175,10 @@ public class ExchangeInvoiceItemHandler
                 throw new ForbiddenException(
                     "The user does not have permission to process exchanges.");
             }
+
+            // ============================================================
+            // 3. Get invoice item
+            // ============================================================
 
             var invoiceItem =
                 await connection.QuerySingleOrDefaultAsync<dynamic>(
@@ -197,6 +210,10 @@ public class ExchangeInvoiceItemHandler
 
             var oldProductId = (int)invoiceItem.ProductId;
 
+            // ============================================================
+            // 4. Check already returned/exchanged quantity
+            // ============================================================
+
             var alreadyReturned =
                 await connection.QuerySingleAsync<int>(
                     """
@@ -213,14 +230,18 @@ public class ExchangeInvoiceItemHandler
                 request.ReturnedQuantity,
                 (int)invoiceItem.Quantity);
 
+            // ============================================================
+            // 5. Load old and replacement products
+            // ============================================================
+
             var productIds = new[]
-                {
-                    oldProductId,
-                    request.ReplacementProductId
-                }
-                .Distinct()
-                .OrderBy(id => id)
-                .ToList();
+            {
+                oldProductId,
+                request.ReplacementProductId
+            }
+            .Distinct()
+            .OrderBy(id => id)
+            .ToList();
 
             var products =
                 new Dictionary<int, ProductStockRow>();
@@ -256,13 +277,18 @@ public class ExchangeInvoiceItemHandler
 
             var oldProduct = products[oldProductId];
 
+            // ============================================================
+            // 6. Return old product to stock
+            // ============================================================
+
             var returnedInPieces =
                 InvoiceCalculator.ConvertToBaseUnits(
                     (string)invoiceItem.UnitSold,
                     request.ReturnedQuantity,
                     oldProduct.PiecesPerPackage);
 
-            var oldBalanceBeforeInPieces = oldProduct.StockInPieces;
+            var oldBalanceBeforeInPieces =
+                oldProduct.StockInPieces;
 
             await connection.ExecuteAsync(
                 """
@@ -280,16 +306,36 @@ public class ExchangeInvoiceItemHandler
 
             oldProduct.StockInPieces += returnedInPieces;
 
-            // نفس نمط Restock/Deduct: التبديل بيتكوّن من حركتين على StockMovements —
-            // إرجاع للصنف القديم وبيع للصنف البديل.
+            // ============================================================
+            // 7. Stock movement - return old product
+            // ============================================================
+
             await connection.ExecuteAsync(
                 """
                 INSERT INTO StockMovements
-                    (ProductId, Type, QuantityInPieces, BalanceBefore, BalanceAfter,
-                     Reason, ReferenceInvoiceId, CreatedAt, CreatedByUserId)
+                    (
+                        ProductId,
+                        Type,
+                        QuantityInPieces,
+                        BalanceBefore,
+                        BalanceAfter,
+                        Reason,
+                        ReferenceInvoiceId,
+                        CreatedAt,
+                        CreatedByUserId
+                    )
                 VALUES
-                    (@ProductId, @Type, @QuantityInPieces, @BalanceBefore, @BalanceAfter,
-                     @Reason, @ReferenceInvoiceId, UTC_TIMESTAMP(6), @CreatedByUserId);
+                    (
+                        @ProductId,
+                        @Type,
+                        @QuantityInPieces,
+                        @BalanceBefore,
+                        @BalanceAfter,
+                        @Reason,
+                        @ReferenceInvoiceId,
+                        UTC_TIMESTAMP(6),
+                        @CreatedByUserId
+                    );
                 """,
                 new
                 {
@@ -299,14 +345,16 @@ public class ExchangeInvoiceItemHandler
                     BalanceBefore = oldBalanceBeforeInPieces,
                     BalanceAfter = oldProduct.StockInPieces,
                     request.Reason,
-                    ReferenceInvoiceId = (int)invoiceItem.InvoiceId,
-                    CreatedByUserId = request.ProcessedBy
+                    ReferenceInvoiceId =
+                        (int)invoiceItem.InvoiceId,
+                    CreatedByUserId =
+                        request.ProcessedBy
                 },
                 transaction);
 
-            var returnedItemValue =
-                (decimal)invoiceItem.UnitPriceSnapshot *
-                request.ReturnedQuantity;
+            // ============================================================
+            // 8. Validate replacement product
+            // ============================================================
 
             var replacementProduct =
                 products[request.ReplacementProductId];
@@ -316,6 +364,10 @@ public class ExchangeInvoiceItemHandler
                 throw new BusinessRuleException(
                     $"Replacement product {request.ReplacementProductId} is inactive.");
             }
+
+            // ============================================================
+            // 9. Calculate replacement quantity
+            // ============================================================
 
             var replacementInPieces =
                 InvoiceCalculator.ConvertToBaseUnits(
@@ -328,7 +380,12 @@ public class ExchangeInvoiceItemHandler
                 replacementInPieces,
                 replacementProduct.StockInPieces);
 
-            var replacementBalanceBeforeInPieces = replacementProduct.StockInPieces;
+            var replacementBalanceBeforeInPieces =
+                replacementProduct.StockInPieces;
+
+            // ============================================================
+            // 10. Deduct replacement product from stock
+            // ============================================================
 
             await connection.ExecuteAsync(
                 """
@@ -344,32 +401,69 @@ public class ExchangeInvoiceItemHandler
                 },
                 transaction);
 
+            // ============================================================
+            // 11. Stock movement - sale of replacement product
+            // ============================================================
+
             await connection.ExecuteAsync(
                 """
                 INSERT INTO StockMovements
-                    (ProductId, Type, QuantityInPieces, BalanceBefore, BalanceAfter,
-                     Reason, ReferenceInvoiceId, CreatedAt, CreatedByUserId)
+                    (
+                        ProductId,
+                        Type,
+                        QuantityInPieces,
+                        BalanceBefore,
+                        BalanceAfter,
+                        Reason,
+                        ReferenceInvoiceId,
+                        CreatedAt,
+                        CreatedByUserId
+                    )
                 VALUES
-                    (@ProductId, @Type, @QuantityInPieces, @BalanceBefore, @BalanceAfter,
-                     NULL, @ReferenceInvoiceId, UTC_TIMESTAMP(6), @CreatedByUserId);
+                    (
+                        @ProductId,
+                        @Type,
+                        @QuantityInPieces,
+                        @BalanceBefore,
+                        @BalanceAfter,
+                        NULL,
+                        @ReferenceInvoiceId,
+                        UTC_TIMESTAMP(6),
+                        @CreatedByUserId
+                    );
                 """,
                 new
                 {
-                    ProductId = request.ReplacementProductId,
+                    ProductId =
+                        request.ReplacementProductId,
                     Type = (int)StockMovementType.Sale,
-                    QuantityInPieces = replacementInPieces,
-                    BalanceBefore = replacementBalanceBeforeInPieces,
-                    BalanceAfter = replacementBalanceBeforeInPieces - replacementInPieces,
-                    ReferenceInvoiceId = (int)invoiceItem.InvoiceId,
-                    CreatedByUserId = request.ProcessedBy
+                    QuantityInPieces =
+                        replacementInPieces,
+                    BalanceBefore =
+                        replacementBalanceBeforeInPieces,
+                    BalanceAfter =
+                        replacementBalanceBeforeInPieces -
+                        replacementInPieces,
+                    ReferenceInvoiceId =
+                        (int)invoiceItem.InvoiceId,
+                    CreatedByUserId =
+                        request.ProcessedBy
                 },
                 transaction);
+
+            // ============================================================
+            // 12. Calculate prices
+            // ============================================================
 
             var replacementUnitPrice =
                 InvoiceCalculator.ResolveUnitPrice(
                     request.ReplacementUnitSold,
                     replacementProduct.PricePerPiece,
                     replacementProduct.PricePerPackage);
+
+            var returnedItemValue =
+                (decimal)invoiceItem.UnitPriceSnapshot *
+                request.ReturnedQuantity;
 
             var replacementItemValue =
                 replacementUnitPrice *
@@ -395,6 +489,10 @@ public class ExchangeInvoiceItemHandler
                     newSubtotal,
                     newDiscountAmount);
 
+            // ============================================================
+            // 13. Update invoice
+            // ============================================================
+
             await connection.ExecuteAsync(
                 """
                 UPDATE Invoices
@@ -407,9 +505,14 @@ public class ExchangeInvoiceItemHandler
                 {
                     NewSubtotal = newSubtotal,
                     NewTotal = newTotal,
-                    InvoiceId = (int)invoiceItem.InvoiceId
+                    InvoiceId =
+                        (int)invoiceItem.InvoiceId
                 },
                 transaction);
+
+            // ============================================================
+            // 14. Save exchange record
+            // ============================================================
 
             var exchangeId =
                 await connection.QuerySingleAsync<int>(
@@ -454,32 +557,48 @@ public class ExchangeInvoiceItemHandler
                     },
                     transaction);
 
+            // ============================================================
+            // 15. Commit
+            // ============================================================
+
             transaction.Commit();
 
             return new ExchangeInvoiceItemResponse
             {
                 Success = true,
+
                 ExchangeId = exchangeId,
+
                 InvoiceId =
                     (int)invoiceItem.InvoiceId,
+
                 InvoiceItemId =
                     request.InvoiceItemId,
+
                 ReturnedQuantity =
                     request.ReturnedQuantity,
+
                 ReplacementProductId =
                     request.ReplacementProductId,
+
                 ReplacementQuantity =
                     request.ReplacementQuantity,
+
                 ReturnedItemValue =
                     returnedItemValue,
+
                 ReplacementItemValue =
                     replacementItemValue,
+
                 PriceDifference =
                     priceDifference,
+
                 NewSubtotal =
                     newSubtotal,
+
                 NewTotal =
                     newTotal,
+
                 CreatedAt =
                     DateTime.UtcNow
             };

@@ -26,8 +26,8 @@ public class InvoicesController : ControllerBase
     {
         var command = FinalizeInvoiceCommand.FromRequest(request);
 
-        // الكاشير دايماً هو صاحب التوكن الحالي، مش أي id مبعوت بالـ body — هيك ما
-        // يقدر حدا يسجّل فاتورة باسم كاشير تاني.
+        // الكاشير دائماً هو صاحب التوكن الحالي،
+        // وليس أي ID مرسل من الـ body.
         command.CashierId = CurrentUserId();
 
         var response = await _mediator.Send(command, ct);
@@ -42,6 +42,7 @@ public class InvoicesController : ControllerBase
         CancellationToken ct)
     {
         var command = ReturnInvoiceItemCommand.FromRequest(request);
+
         command.ProcessedBy = CurrentUserId();
 
         var response = await _mediator.Send(command, ct);
@@ -73,8 +74,9 @@ public class InvoicesController : ControllerBase
 
     /// <summary>
     /// Exchanges one invoice line for another product.
+    /// Only users with the ProcessExchange permission can perform an exchange.
     /// </summary>
-    [Authorize(Policy = Permissions.ProcessReturn)]
+    [Authorize(Policy = Permissions.ProcessExchange)]
     [HttpPost("exchange")]
     [ProducesResponseType(
         typeof(ExchangeInvoiceItemResponse),
@@ -84,6 +86,7 @@ public class InvoicesController : ControllerBase
         CancellationToken ct)
     {
         var command = ExchangeInvoiceItemCommand.FromRequest(request);
+
         command.ProcessedBy = CurrentUserId();
 
         var response = await _mediator.Send(command, ct);
@@ -96,7 +99,10 @@ public class InvoicesController : ControllerBase
         var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
         if (!int.TryParse(value, out var userId))
-            throw new UnauthorizedAccessException("The user ID claim is missing.");
+        {
+            throw new UnauthorizedAccessException(
+                "The user ID claim is missing.");
+        }
 
         return userId;
     }
