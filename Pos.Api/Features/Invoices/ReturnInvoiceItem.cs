@@ -98,10 +98,15 @@ public class ReturnInvoiceItemHandler : IRequestHandler<ReturnInvoiceItemCommand
                 throw new NotFoundException($"Invoice item {request.InvoiceItemId} not found.");
             }
 
-            // BR-15: cumulative returns for this line can never exceed what was sold.
+            // BR-15: cumulative returns AND exchanges for this line can never exceed
+            // what was sold. Only counting Type = 'return' here was the bug: a line that
+            // had already been (partially) exchanged could still be returned again for
+            // its full original quantity, refunding/restocking more than was ever sold.
+            // Match ExchangeInvoiceItemHandler and GetInvoiceByNumberHandler, which both
+            // correctly sum both types.
             int alreadyReturned = await connection.QuerySingleAsync<int>(
                 @"SELECT COALESCE(SUM(ReturnedQuantity), 0) FROM InvoiceReturns
-                  WHERE InvoiceItemId = @InvoiceItemId AND Type = 'return'",
+                  WHERE InvoiceItemId = @InvoiceItemId AND Type IN ('return', 'exchange')",
                 new { request.InvoiceItemId },
                 transaction);
 

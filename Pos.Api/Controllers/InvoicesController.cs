@@ -51,6 +51,42 @@ public class InvoicesController : ControllerBase
     }
 
     /// <summary>
+    /// Invoice history. A cashier only ever sees their own invoices; a user holding
+    /// view_all_invoices (typically Admin) can see every invoice, and may optionally
+    /// filter down to one cashier with ?cashierId=.
+    /// </summary>
+    [Authorize]
+    [HttpGet]
+    [ProducesResponseType(
+        typeof(ListInvoicesResponse),
+        StatusCodes.Status200OK)]
+    public async Task<ActionResult<ListInvoicesResponse>> List(
+        [FromQuery] int? cashierId,
+        [FromQuery] DateTime? fromDate,
+        [FromQuery] DateTime? toDate,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        var query = new ListInvoicesQuery
+        {
+            RequestingUserId = CurrentUserId(),
+            RequestingUserCanViewAll =
+                User.IsInRole("Admin") ||
+                User.HasClaim("permission", Permissions.ViewAllInvoices),
+            CashierId = cashierId,
+            FromDate = fromDate,
+            ToDate = toDate,
+            Page = page,
+            PageSize = pageSize
+        };
+
+        var response = await _mediator.Send(query, ct);
+
+        return Ok(response);
+    }
+
+    /// <summary>
     /// Looks up a finalized invoice by its human-facing InvoiceNumber,
     /// including each line's already-returned/exchanged quantity.
     /// </summary>
@@ -88,6 +124,48 @@ public class InvoicesController : ControllerBase
         var command = ExchangeInvoiceItemCommand.FromRequest(request);
 
         command.ProcessedBy = CurrentUserId();
+
+        var response = await _mediator.Send(command, ct);
+
+        return Ok(response);
+    }
+
+    /// <summary>
+    /// Debt Notebook: lists invoices recorded as deferred payment ("مين متداين؟").
+    /// Defaults to outstanding (unpaid) debts only.
+    /// </summary>
+    [Authorize(Policy = Permissions.RecordDebt)]
+    [HttpGet("debts")]
+    [ProducesResponseType(
+        typeof(ListDebtsResponse),
+        StatusCodes.Status200OK)]
+    public async Task<ActionResult<ListDebtsResponse>> ListDebts(
+        [FromQuery] bool onlyUnpaid = true,
+        [FromQuery] string? nickname = null,
+        CancellationToken ct = default)
+    {
+        var query = new ListDebtsQuery
+        {
+            OnlyUnpaid = onlyUnpaid,
+            Nickname = nickname
+        };
+
+        var response = await _mediator.Send(query, ct);
+
+        return Ok(response);
+    }
+
+    /// <summary>Marks a debt invoice as paid ("تسديد الدين").</summary>
+    [Authorize(Policy = Permissions.RecordDebt)]
+    [HttpPost("{invoiceNumber:int}/pay-debt")]
+    [ProducesResponseType(
+        typeof(MarkDebtPaidResponse),
+        StatusCodes.Status200OK)]
+    public async Task<ActionResult<MarkDebtPaidResponse>> PayDebt(
+        int invoiceNumber,
+        CancellationToken ct)
+    {
+        var command = new MarkDebtPaidCommand { InvoiceNumber = invoiceNumber };
 
         var response = await _mediator.Send(command, ct);
 

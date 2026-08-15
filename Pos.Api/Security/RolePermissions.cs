@@ -9,9 +9,12 @@ public static class RolePermissions
             {
                 Permissions.CreateInvoice,
                 Permissions.ProcessReturn,
+                Permissions.ProcessExchange,
                 Permissions.PrintInvoice,
                 Permissions.ViewAllInvoices,
                 Permissions.ViewReports,
+                Permissions.EditPrice,
+                Permissions.RecordDebt,
             },
             ["InventoryOnly"] = new[]
             {
