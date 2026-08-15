@@ -15,6 +15,7 @@ public static class Permissions
     public const string ViewAllInvoices = "view_all_invoices";
     public const string ViewReports = "view_reports";
     public const string ViewAuditLog = "view_audit_log";
+    public const string RecordDebt = "record_debt";
 }
 
 public sealed class PermissionRequirement : IAuthorizationRequirement

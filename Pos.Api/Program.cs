@@ -175,7 +175,6 @@ builder.Services.AddAuthorization(options =>
 
     string[] permissions =
     {
-        
         Permissions.CreateInvoice,
         Permissions.ProcessReturn,
         Permissions.ProcessExchange,
@@ -186,7 +185,8 @@ builder.Services.AddAuthorization(options =>
         Permissions.ManageUsers,
         Permissions.ViewAllInvoices,
         Permissions.ViewReports,
-        Permissions.ViewAuditLog
+        Permissions.ViewAuditLog,
+        Permissions.RecordDebt
     };
 
     foreach (var permission in permissions)
@@ -211,7 +211,7 @@ builder.Services.AddCors(options =>
         {
             policy
                 .WithOrigins(
-                    "http://localhost:5173")
+                    "http://localhost:5173",  "http://localhost:5174")
                 .AllowAnyHeader()
                 .AllowAnyMethod();
         });
