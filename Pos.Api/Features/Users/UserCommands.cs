@@ -31,6 +31,11 @@ public sealed class CreateUserHandler : IRequestHandler<CreateUserCommand, UserD
             {
                 await ValidatePermissionIds(db, tx, permissionIds);
                 await ValidateRolePermissions(db, tx, request.Role, permissionIds);
+
+                // مهما اختار الأدمن، الصلاحيات الإلزامية للدور (مثلاً process_return
+                // للكاشير) بتنضاف دايماً — مش رح تضل معلّقة على إن حدا يفتكر يحطّها.
+                var mandatoryIds = await GetMandatoryPermissionIds(db, tx, request.Role);
+                permissionIds = permissionIds.Union(mandatoryIds).ToArray();
             }
 
             var userId = await db.ExecuteScalarAsync<int>("""
@@ -105,6 +110,24 @@ public sealed class CreateUserHandler : IRequestHandler<CreateUserCommand, UserD
         var ids = await db.QueryAsync<int>("SELECT Id FROM Permissions;", transaction: tx);
         return ids.ToArray();
     }
+
+    /// <summary>
+    /// بيرجع IDs الصلاحيات الإلزامية لدور معيّن (شوف RolePermissions.MandatoryByRole).
+    /// بترجع مصفوفة فاضية لو الدور ما إله صلاحيات إلزامية معرّفة.
+    /// </summary>
+    internal static async Task<int[]> GetMandatoryPermissionIds(
+        System.Data.IDbConnection db,
+        System.Data.IDbTransaction tx,
+        string role)
+    {
+        if (!RolePermissions.MandatoryByRole.TryGetValue(role, out var names) || names.Length == 0)
+            return Array.Empty<int>();
+
+        var ids = await db.QueryAsync<int>(
+            "SELECT Id FROM Permissions WHERE Name IN @Names;",
+            new { Names = names }, tx);
+        return ids.ToArray();
+    }
 }
 
 public sealed class UpdateUserHandler : IRequestHandler<UpdateUserCommand, UserDto>
@@ -175,6 +198,18 @@ public sealed class UpdateUserHandler : IRequestHandler<UpdateUserCommand, UserD
                         VALUES (@Id, @permissionId);
                         """, new { request.Id, permissionId }, tx);
             }
+            else
+            {
+                // نفس منطق الإلزامية: أي مستخدم (موجود من قبل أو رجع تغيّر دوره)
+                // لازم يضل ماسك صلاحياته الإلزامية، حتى لو الشاشة يلي عدّلته ما
+                // بعتت permissionIds أصلاً (مثلاً تعديل بيانات بس بدون لمس الصلاحيات).
+                var mandatoryIds = await CreateUserHandler.GetMandatoryPermissionIds(db, tx, request.Role);
+                foreach (var permissionId in mandatoryIds)
+                    await db.ExecuteAsync("""
+                        INSERT IGNORE INTO UserPermissions (UserId, PermissionId)
+                        VALUES (@Id, @permissionId);
+                        """, new { request.Id, permissionId }, tx);
+            }
 
             if (!string.IsNullOrWhiteSpace(request.NewPassword))
             {
@@ -235,6 +270,11 @@ public sealed class SetUserPermissionsHandler
             var permissionIds = request.PermissionIds.Distinct().ToArray();
             await CreateUserHandler.ValidatePermissionIds(db, tx, permissionIds);
             await CreateUserHandler.ValidateRolePermissions(db, tx, role, permissionIds);
+
+            // ما بينقدر حد يشيل صلاحية إلزامية (مثل process_return للكاشير) عن
+            // طريق شاشة الصلاحيات — بترضم رجوع تلقائياً حتى لو الأدمن ما اختارها.
+            var mandatoryIds = await CreateUserHandler.GetMandatoryPermissionIds(db, tx, role);
+            permissionIds = permissionIds.Union(mandatoryIds).ToArray();
 
             await db.ExecuteAsync(
                 "DELETE FROM UserPermissions WHERE UserId = @Id;",

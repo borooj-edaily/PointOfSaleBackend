@@ -14,12 +14,11 @@ public class InvoiceItemDto
     public decimal UnitPriceSnapshot { get; set; }
     public decimal LineTotal { get; set; }
 
-    // BR-15 support: how many units of this line were already returned/exchanged,
-    // and how many are still eligible to be returned/exchanged.
+    // BR-15 support
     public int AlreadyReturnedQuantity { get; set; }
     public int ReturnableQuantity { get; set; }
 
-    // Price Override: set only when this line's price was overridden at checkout.
+    // Price Override
     public decimal? OriginalUnitPrice { get; set; }
     public string? PriceOverrideReason { get; set; }
 }
@@ -33,20 +32,29 @@ public class GetInvoiceByNumberResponse
     public decimal Subtotal { get; set; }
     public decimal Total { get; set; }
     public DateTime CreatedAt { get; set; }
+
     public List<InvoiceItemDto> Items { get; set; } = new();
 
-    // Debt Notebook (v1)
+    // Debt Notebook
     public bool IsDebt { get; set; }
     public string? DebtorNickname { get; set; }
     public DateTime? DebtPaidAt { get; set; }
+
+    // Customer
+    public int? CustomerId { get; set; }
+    public string? CustomerName { get; set; }
 }
 
-public class GetInvoiceByNumberQuery : IRequest<GetInvoiceByNumberResponse>
+public class GetInvoiceByNumberQuery
+    : IRequest<GetInvoiceByNumberResponse>
 {
     public int InvoiceNumber { get; set; }
 }
 
-/// <summary>Read-only projection of the Invoices row, used only inside this handler.</summary>
+/// <summary>
+/// Read-only projection of the invoice header,
+/// including the linked customer.
+/// </summary>
 public class InvoiceHeaderRow
 {
     public int InvoiceId { get; set; }
@@ -56,12 +64,19 @@ public class InvoiceHeaderRow
     public decimal Subtotal { get; set; }
     public decimal Total { get; set; }
     public DateTime CreatedAt { get; set; }
+
     public bool IsDebt { get; set; }
     public string? DebtorNickname { get; set; }
     public DateTime? DebtPaidAt { get; set; }
+
+    // Customer
+    public int? CustomerId { get; set; }
+    public string? CustomerName { get; set; }
 }
 
-/// <summary>Read-only projection of an InvoiceItems row, joined with its returned/exchanged total.</summary>
+/// <summary>
+/// Read-only projection of an InvoiceItems row.
+/// </summary>
 public class InvoiceItemRow
 {
     public int InvoiceItemId { get; set; }
@@ -70,12 +85,17 @@ public class InvoiceItemRow
     public int Quantity { get; set; }
     public decimal UnitPriceSnapshot { get; set; }
     public decimal LineTotal { get; set; }
+
     public int AlreadyReturnedQuantity { get; set; }
+
     public decimal? OriginalUnitPrice { get; set; }
     public string? PriceOverrideReason { get; set; }
 }
 
-public class GetInvoiceByNumberHandler : IRequestHandler<GetInvoiceByNumberQuery, GetInvoiceByNumberResponse>
+public class GetInvoiceByNumberHandler
+    : IRequestHandler<
+        GetInvoiceByNumberQuery,
+        GetInvoiceByNumberResponse>
 {
     private readonly IPosDatabase _database;
 
@@ -84,38 +104,91 @@ public class GetInvoiceByNumberHandler : IRequestHandler<GetInvoiceByNumberQuery
         _database = database;
     }
 
-    public async Task<GetInvoiceByNumberResponse> Handle(GetInvoiceByNumberQuery request, CancellationToken ct)
+    public async Task<GetInvoiceByNumberResponse> Handle(
+        GetInvoiceByNumberQuery request,
+        CancellationToken ct)
     {
         using var connection = _database.Open();
 
-        var invoice = await connection.QuerySingleOrDefaultAsync<InvoiceHeaderRow>(
-            @"SELECT
-                  Id AS InvoiceId, InvoiceNumber, CashierId, HasReturn,
-                  Subtotal, Total, CreatedAt, IsDebt, DebtorNickname, DebtPaidAt
-              FROM Invoices
-              WHERE InvoiceNumber = @InvoiceNumber",
-            new { request.InvoiceNumber });
+        // ---------------------------------------------------------
+        // Invoice header + Customer
+        // ---------------------------------------------------------
+
+        var invoice =
+            await connection.QuerySingleOrDefaultAsync<InvoiceHeaderRow>(
+                """
+                SELECT
+                    i.Id AS InvoiceId,
+                    i.InvoiceNumber,
+                    i.CashierId,
+                    i.HasReturn,
+                    i.Subtotal,
+                    i.Total,
+                    i.CreatedAt,
+
+                    i.IsDebt,
+                    i.DebtorNickname,
+                    i.DebtPaidAt,
+
+                    i.CustomerId,
+                    c.Name AS CustomerName
+
+                FROM Invoices i
+
+                LEFT JOIN Customers c
+                    ON c.Id = i.CustomerId
+
+                WHERE i.InvoiceNumber = @InvoiceNumber
+                """,
+                new
+                {
+                    request.InvoiceNumber
+                });
 
         if (invoice is null)
         {
-            throw new NotFoundException($"Invoice {request.InvoiceNumber} not found.");
+            throw new NotFoundException(
+                $"Invoice {request.InvoiceNumber} not found."
+            );
         }
 
-        // For each line, sum whatever was already consumed by prior returns/exchanges
-        // (BR-15), so the frontend can show/enforce the remaining returnable quantity.
-        var itemRows = await connection.QueryAsync<InvoiceItemRow>(
-            @"SELECT
-                  ii.Id AS InvoiceItemId, ii.ProductId, ii.UnitSold, ii.Quantity,
-                  ii.UnitPriceSnapshot, ii.LineTotal,
-                  ii.OriginalUnitPrice, ii.PriceOverrideReason,
-                  COALESCE((
-                      SELECT SUM(ir.ReturnedQuantity)
-                      FROM InvoiceReturns ir
-                      WHERE ir.InvoiceItemId = ii.Id AND ir.Type IN ('return', 'exchange')
-                  ), 0) AS AlreadyReturnedQuantity
-              FROM InvoiceItems ii
-              WHERE ii.InvoiceId = @InvoiceId",
-            new { InvoiceId = invoice.InvoiceId });
+        // ---------------------------------------------------------
+        // Invoice items
+        // ---------------------------------------------------------
+
+        var itemRows =
+            await connection.QueryAsync<InvoiceItemRow>(
+                """
+                SELECT
+                    ii.Id AS InvoiceItemId,
+                    ii.ProductId,
+                    ii.UnitSold,
+                    ii.Quantity,
+                    ii.UnitPriceSnapshot,
+                    ii.LineTotal,
+
+                    ii.OriginalUnitPrice,
+                    ii.PriceOverrideReason,
+
+                    COALESCE((
+                        SELECT SUM(ir.ReturnedQuantity)
+                        FROM InvoiceReturns ir
+                        WHERE ir.InvoiceItemId = ii.Id
+                          AND ir.Type IN ('return', 'exchange')
+                    ), 0) AS AlreadyReturnedQuantity
+
+                FROM InvoiceItems ii
+
+                WHERE ii.InvoiceId = @InvoiceId
+                """,
+                new
+                {
+                    InvoiceId = invoice.InvoiceId
+                });
+
+        // ---------------------------------------------------------
+        // Response
+        // ---------------------------------------------------------
 
         return new GetInvoiceByNumberResponse
         {
@@ -126,22 +199,41 @@ public class GetInvoiceByNumberHandler : IRequestHandler<GetInvoiceByNumberQuery
             Subtotal = invoice.Subtotal,
             Total = invoice.Total,
             CreatedAt = invoice.CreatedAt,
+
+            // Debt
             IsDebt = invoice.IsDebt,
             DebtorNickname = invoice.DebtorNickname,
             DebtPaidAt = invoice.DebtPaidAt,
-            Items = itemRows.Select(i => new InvoiceItemDto
-            {
-                InvoiceItemId = i.InvoiceItemId,
-                ProductId = i.ProductId,
-                UnitSold = i.UnitSold,
-                Quantity = i.Quantity,
-                UnitPriceSnapshot = i.UnitPriceSnapshot,
-                LineTotal = i.LineTotal,
-                AlreadyReturnedQuantity = i.AlreadyReturnedQuantity,
-                ReturnableQuantity = i.Quantity - i.AlreadyReturnedQuantity,
-                OriginalUnitPrice = i.OriginalUnitPrice,
-                PriceOverrideReason = i.PriceOverrideReason
-            }).ToList()
+
+            // Customer
+            CustomerId = invoice.CustomerId,
+            CustomerName = invoice.CustomerName,
+
+            // Items
+            Items = itemRows
+                .Select(i => new InvoiceItemDto
+                {
+                    InvoiceItemId = i.InvoiceItemId,
+                    ProductId = i.ProductId,
+                    UnitSold = i.UnitSold,
+                    Quantity = i.Quantity,
+                    UnitPriceSnapshot = i.UnitPriceSnapshot,
+                    LineTotal = i.LineTotal,
+
+                    AlreadyReturnedQuantity =
+                        i.AlreadyReturnedQuantity,
+
+                    ReturnableQuantity =
+                        i.Quantity -
+                        i.AlreadyReturnedQuantity,
+
+                    OriginalUnitPrice =
+                        i.OriginalUnitPrice,
+
+                    PriceOverrideReason =
+                        i.PriceOverrideReason
+                })
+                .ToList()
         };
     }
 }
