@@ -142,12 +142,14 @@ public class InvoicesController : ControllerBase
     public async Task<ActionResult<ListDebtsResponse>> ListDebts(
         [FromQuery] bool onlyUnpaid = true,
         [FromQuery] string? nickname = null,
+        [FromQuery] int? customerId = null,
         CancellationToken ct = default)
     {
         var query = new ListDebtsQuery
         {
             OnlyUnpaid = onlyUnpaid,
-            Nickname = nickname
+            Nickname = nickname,
+            CustomerId = customerId
         };
 
         var response = await _mediator.Send(query, ct);

@@ -14,10 +14,13 @@ public class FinalizeInvoiceRequest
     public string? DiscountType { get; set; }
     public decimal? DiscountValue { get; set; }
 
-    // Debt Notebook (v1): when true, the invoice is recorded as deferred
-    // payment instead of being settled in cash right now. DebtorNickname is a
-    // free-text label (no full customer registry yet) — required when IsDebt.
+    // Debt Notebook: when true, the invoice is recorded as deferred payment
+    // instead of being settled in cash right now. Either a registered
+    // CustomerId (v2, full customer file) or a free-text DebtorNickname
+    // (v1, quick one-off debtor) is required when IsDebt — CustomerId wins
+    // when both are present.
     public bool IsDebt { get; set; }
+    public int? CustomerId { get; set; }
     public string? DebtorNickname { get; set; }
 }
 
@@ -43,6 +46,7 @@ public class FinalizeInvoiceResponse
     public decimal Total { get; set; }
     public DateTime CreatedAt { get; set; }
     public bool IsDebt { get; set; }
+    public int? CustomerId { get; set; }
     public string? DebtorNickname { get; set; }
 }
 
@@ -53,6 +57,7 @@ public class FinalizeInvoiceCommand : IRequest<FinalizeInvoiceResponse>
     public string? DiscountType { get; set; }
     public decimal? DiscountValue { get; set; }
     public bool IsDebt { get; set; }
+    public int? CustomerId { get; set; }
     public string? DebtorNickname { get; set; }
 
     public static FinalizeInvoiceCommand FromRequest(FinalizeInvoiceRequest request) => new()
@@ -62,6 +67,7 @@ public class FinalizeInvoiceCommand : IRequest<FinalizeInvoiceResponse>
         DiscountType = request.DiscountType,
         DiscountValue = request.DiscountValue,
         IsDebt = request.IsDebt,
+        CustomerId = request.CustomerId,
         DebtorNickname = request.DebtorNickname
     };
 }
@@ -98,11 +104,13 @@ public class FinalizeInvoiceValidator : AbstractValidator<FinalizeInvoiceCommand
         RuleFor(x => x.DebtorNickname)
             .MaximumLength(100).WithMessage("DebtorNickname cannot exceed 100 characters.");
 
+        // CustomerId (registered customer, v2) or DebtorNickname (quick free-text
+        // debtor, v1) — at least one must identify who the debt belongs to.
         When(x => x.IsDebt, () =>
         {
-            RuleFor(x => x.DebtorNickname)
-                .NotEmpty()
-                .WithMessage("DebtorNickname is required when recording an invoice as a debt.");
+            RuleFor(x => x)
+                .Must(x => x.CustomerId.HasValue || !string.IsNullOrWhiteSpace(x.DebtorNickname))
+                .WithMessage("Either CustomerId or DebtorNickname is required when recording an invoice as a debt.");
         });
 
         RuleFor(x => x.DiscountType)
@@ -173,6 +181,13 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
                 }
             }
 
+            // Dept Notebook (v2): resolved once up front, alongside the permission
+            // check, so a bad/inactive CustomerId also fails clean before any
+            // stock row gets locked. When CustomerId is set, its Name becomes the
+            // DebtorNickname shown on the receipt/debt list — keeps every older
+            // read path (invoice printing, ListDebts) working unchanged.
+            string? resolvedDebtorNickname = request.DebtorNickname;
+
             if (request.IsDebt)
             {
                 var canRecordDebt = await connection.QuerySingleAsync<int>(
@@ -186,6 +201,26 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
                 {
                     throw new ForbiddenException(
                         "The user does not have permission to record an invoice as a debt.");
+                }
+
+                if (request.CustomerId.HasValue)
+                {
+                    var customer = await connection.QuerySingleOrDefaultAsync<(int Id, string Name, bool IsActive)>(
+                        "SELECT Id, Name, IsActive FROM Customers WHERE Id = @CustomerId",
+                        new { request.CustomerId },
+                        transaction);
+
+                    if (customer.Id == 0)
+                    {
+                        throw new NotFoundException($"Customer {request.CustomerId} not found.");
+                    }
+
+                    if (!customer.IsActive)
+                    {
+                        throw new BusinessRuleException($"Customer {request.CustomerId} is inactive.");
+                    }
+
+                    resolvedDebtorNickname = customer.Name;
                 }
             }
 
@@ -279,9 +314,9 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
 
             var invoiceId = await connection.QuerySingleAsync<int>(
                 @"INSERT INTO Invoices
-                    (InvoiceNumber, CashierId, HasReturn, Subtotal, DiscountType, DiscountValue, Total, IsDebt, DebtorNickname, CreatedAt)
+                    (InvoiceNumber, CashierId, HasReturn, Subtotal, DiscountType, DiscountValue, Total, IsDebt, CustomerId, DebtorNickname, CreatedAt)
                   VALUES
-                    (@InvoiceNumber, @CashierId, 0, @Subtotal, @DiscountType, @DiscountValue, @Total, @IsDebt, @DebtorNickname, UTC_TIMESTAMP());
+                    (@InvoiceNumber, @CashierId, 0, @Subtotal, @DiscountType, @DiscountValue, @Total, @IsDebt, @CustomerId, @DebtorNickname, UTC_TIMESTAMP());
                   SELECT LAST_INSERT_ID();",
                 new
                 {
@@ -292,7 +327,8 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
                     request.DiscountValue,
                     Total = total,
                     request.IsDebt,
-                    DebtorNickname = request.IsDebt ? request.DebtorNickname : null
+                    CustomerId = request.CustomerId,
+                    DebtorNickname = request.IsDebt ? resolvedDebtorNickname : null
                 },
                 transaction);
 
@@ -355,7 +391,8 @@ public class FinalizeInvoiceHandler : IRequestHandler<FinalizeInvoiceCommand, Fi
                 Total = total,
                 CreatedAt = DateTime.UtcNow,
                 IsDebt = request.IsDebt,
-                DebtorNickname = request.IsDebt ? request.DebtorNickname : null
+                CustomerId = request.CustomerId,
+                DebtorNickname = request.IsDebt ? resolvedDebtorNickname : null
             };
         }
         catch (Exception ex)

@@ -14,6 +14,8 @@ public class DebtListItemDto
     public int InvoiceId { get; set; }
     public int InvoiceNumber { get; set; }
     public string DebtorNickname { get; set; } = string.Empty;
+    public int? CustomerId { get; set; }
+    public string? CustomerPhone { get; set; }
     public int CashierId { get; set; }
     public string CashierName { get; set; } = string.Empty;
     public decimal Total { get; set; }
@@ -35,6 +37,7 @@ public class ListDebtsQuery : IRequest<ListDebtsResponse>
 {
     public bool OnlyUnpaid { get; set; } = true;
     public string? Nickname { get; set; }
+    public int? CustomerId { get; set; }
 }
 
 public class ListDebtsHandler : IRequestHandler<ListDebtsQuery, ListDebtsResponse>
@@ -60,8 +63,17 @@ public class ListDebtsHandler : IRequestHandler<ListDebtsQuery, ListDebtsRespons
 
         if (!string.IsNullOrWhiteSpace(request.Nickname))
         {
-            whereClauses.Add("i.DebtorNickname LIKE @Nickname");
+            // "Nickname" search also matches a linked customer's real name,
+            // so the same search box works whether the debt was recorded
+            // against a full customer file or a quick free-text nickname.
+            whereClauses.Add("(i.DebtorNickname LIKE @Nickname OR c.Name LIKE @Nickname)");
             parameters.Add("Nickname", $"%{request.Nickname.Trim()}%");
+        }
+
+        if (request.CustomerId.HasValue)
+        {
+            whereClauses.Add("i.CustomerId = @CustomerId");
+            parameters.Add("CustomerId", request.CustomerId.Value);
         }
 
         string whereSql = "WHERE " + string.Join(" AND ", whereClauses);
@@ -72,6 +84,8 @@ public class ListDebtsHandler : IRequestHandler<ListDebtsQuery, ListDebtsRespons
                 i.Id AS InvoiceId,
                 i.InvoiceNumber,
                 i.DebtorNickname,
+                i.CustomerId,
+                c.Phone AS CustomerPhone,
                 i.CashierId,
                 u.FullName AS CashierName,
                 i.Total,
@@ -79,6 +93,7 @@ public class ListDebtsHandler : IRequestHandler<ListDebtsQuery, ListDebtsRespons
                 i.DebtPaidAt
             FROM Invoices i
             LEFT JOIN Users u ON u.Id = i.CashierId
+            LEFT JOIN Customers c ON c.Id = i.CustomerId
             {whereSql}
             ORDER BY i.DebtPaidAt IS NOT NULL, i.CreatedAt DESC;
             """,
