@@ -18,20 +18,46 @@ namespace Pos.Api.Features.Products.Activate
         {
             using var connection = _database.Open();
 
-            const string checkSql = "SELECT COUNT(1) FROM Products WHERE Id = @Id;";
-            var exists = await connection.ExecuteScalarAsync<int>(checkSql, new { request.Id });
+            const string checkSql = @"
+                SELECT CategoryId FROM Products WHERE Id = @Id;";
 
-            if (exists == 0)
+            var categoryId = await connection.QueryFirstOrDefaultAsync<int?>(checkSql, new { request.Id });
+
+            if (categoryId is null)
                 throw new NotFoundException($"لا يوجد صنف بالمعرف {request.Id}");
 
-            const string updateSql = @"
-                UPDATE Products
-                SET IsActive = TRUE,
-                    UpdatedAt = UTC_TIMESTAMP(6),
-                    UpdatedByUserId = @UpdatedByUserId
-                WHERE Id = @Id;";
+            using var transaction = connection.BeginTransaction();
+            try
+            {
+                // 1) فعّل الصنف نفسه
+                const string updateProductSql = @"
+                    UPDATE Products
+                    SET IsActive = TRUE,
+                        UpdatedAt = UTC_TIMESTAMP(6),
+                        UpdatedByUserId = @UpdatedByUserId
+                    WHERE Id = @Id;";
 
-            await connection.ExecuteAsync(updateSql, new { request.Id, request.UpdatedByUserId });
+                await connection.ExecuteAsync(updateProductSql,
+                    new { request.Id, request.UpdatedByUserId }, transaction);
+
+                // 2) لو الكاتيجوري تبعت الصنف معطّلة، فعّلها هي كمان تلقائياً
+                const string activateCategorySql = @"
+                    UPDATE Categories
+                    SET IsActive = TRUE,
+                        UpdatedAt = UTC_TIMESTAMP(6),
+                        UpdatedByUserId = @UpdatedByUserId
+                    WHERE Id = @CategoryId AND IsActive = FALSE;";
+
+                await connection.ExecuteAsync(activateCategorySql,
+                    new { CategoryId = categoryId, request.UpdatedByUserId }, transaction);
+
+                transaction.Commit();
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
 
             return Unit.Value;
         }
