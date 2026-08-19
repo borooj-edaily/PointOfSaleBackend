@@ -24,7 +24,6 @@ namespace Pos.Api.Features.Categories.Deactivate
             if (exists == 0)
                 throw new NotFoundException($"لا يوجد كاتيجوري بالمعرف {request.Id}");
 
-            connection.Open();
             using var transaction = connection.BeginTransaction();
             try
             {
